@@ -1,4 +1,4 @@
-module github.com/xo/xo
+module github.com/TB-MasanoriIwakura/xo
 
 go 1.18
 
