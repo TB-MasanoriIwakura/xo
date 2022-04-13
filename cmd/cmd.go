@@ -146,38 +146,21 @@ type OutParams struct {
 }
 
 // Run runs the code generation.
-func Run(ctx context.Context, name, version string, cmdArgs ...string) error {
-	dir := parseArg("--src", "-d", cmdArgs)
-	template := parseArg("--template", "-t", cmdArgs)
-	ts, err := NewTemplateSet(ctx, dir, template)
-	if err != nil {
-		return err
-	}
-	// create args
-	args := NewArgs(ts.Target(), ts.Targets()...)
-	// create root command
-	cmd, err := RootCommand(ctx, name, version, ts, args, cmdArgs...)
-	if err != nil {
-		return err
-	}
-	// execute
-	return cmd.Execute()
-}
-
-// NewTemplateSet creates a new templates set.
-func NewTemplateSet(ctx context.Context, dir, template string) (*templates.Set, error) {
+func Run(ctx context.Context, name, version string, cmdargs ...string) error {
 	// build template ts
 	ts := templates.NewDefaultTemplateSet(ctx)
+	// load templates
+	dir, template := parseSrcTemplate(cmdargs...)
 	switch {
 	case dir == "" && template == "":
 		// show all default templates
 		if err := ts.LoadDefaults(ctx); err != nil {
-			return nil, err
+			return err
 		}
 	case template != "":
 		// only load the selected default template
 		if err := ts.LoadDefault(ctx, template); err != nil {
-			return nil, err
+			return err
 		}
 		ts.Use(template)
 	default:
@@ -187,12 +170,20 @@ func NewTemplateSet(ctx context.Context, dir, template string) (*templates.Set, 
 		// add template
 		var err error
 		if s, err = ts.Add(ctx, s, os.DirFS(dir), false); err != nil {
-			return nil, err
+			return err
 		}
 		// use
 		ts.Use(s)
 	}
-	return ts, nil
+	// create args
+	args := NewArgs(ts.Target(), ts.Targets()...)
+	// create root command
+	cmd, err := RootCommand(ctx, name, version, ts, args, cmdargs...)
+	if err != nil {
+		return err
+	}
+	// execute
+	return cmd.Execute()
 }
 
 // RootCommand creates the root command.
@@ -307,13 +298,13 @@ func DumpCommand(ctx context.Context, ts *templates.Set, args *Args) (*cobra.Com
 				case err != nil:
 					return err
 				case d.IsDir():
-					return os.MkdirAll(filepath.Join(v[0], n), 0o755)
+					return os.MkdirAll(filepath.Join(v[0], n), 0755)
 				}
 				buf, err := fs.ReadFile(src, n)
 				if err != nil {
 					return err
 				}
-				return ioutil.WriteFile(filepath.Join(v[0], n), buf, 0o644)
+				return ioutil.WriteFile(filepath.Join(v[0], n), buf, 0644)
 			})
 		},
 	}
@@ -365,6 +356,13 @@ func templateFlags(cmd *cobra.Command, ts *templates.Set, extra bool, args *Args
 	return nil
 }
 
+// parseSrcTemplate scans args for --src or -d and --template or -t.
+func parseSrcTemplate(args ...string) (string, string) {
+	src := parseArg("--src", "-d", args)
+	template := parseArg("--template", "-t", args)
+	return src, template
+}
+
 func parseArg(short, full string, args []string) (s string) {
 	defer func() {
 		s = strings.TrimSpace(s)
@@ -394,7 +392,7 @@ func Exec(ctx context.Context, mode string, ts *templates.Set, args *Args) func(
 		// set template
 		ts.Use(args.TemplateParams.Type.AsString())
 		// build context
-		ctx := BuildContext(ctx, args)
+		ctx := buildContext(ctx, args)
 		// enable verbose output for sql queries
 		if args.Verbose {
 			models.SetLogger(func(str string, v ...interface{}) {
@@ -415,40 +413,35 @@ func Exec(ctx context.Context, mode string, ts *templates.Set, args *Args) func(
 		if err != nil {
 			return err
 		}
-		return Generate(ctx, mode, ts, set, args)
-	}
-}
-
-// Generate generates the XO files with the provided templates, data, and arguments.
-func Generate(ctx context.Context, mode string, ts *templates.Set, set *xo.Set, args *Args) error {
-	// create set context
-	ctx = ts.NewContext(ctx, mode)
-	if err := displayErrors(ts); err != nil {
-		return err
-	}
-	// preprocess
-	ts.Pre(ctx, args.OutParams.Out, mode, set)
-	if err := displayErrors(ts); err != nil {
-		return err
-	}
-	// process
-	ts.Process(ctx, args.OutParams.Out, mode, set)
-	if err := displayErrors(ts); err != nil {
-		return err
-	}
-	// post
-	if !args.OutParams.Debug {
-		ts.Post(ctx, mode)
+		// create set context
+		ctx = ts.NewContext(ctx, mode)
 		if err := displayErrors(ts); err != nil {
 			return err
 		}
+		// preprocess
+		ts.Pre(ctx, args.OutParams.Out, mode, set)
+		if err := displayErrors(ts); err != nil {
+			return err
+		}
+		// process
+		ts.Process(ctx, args.OutParams.Out, mode, set)
+		if err := displayErrors(ts); err != nil {
+			return err
+		}
+		// post
+		if !args.OutParams.Debug {
+			ts.Post(ctx, mode)
+			if err := displayErrors(ts); err != nil {
+				return err
+			}
+		}
+		// dump
+		ts.Dump(args.OutParams.Out)
+		if err := displayErrors(ts); err != nil {
+			return err
+		}
+		return nil
 	}
-	// dump
-	ts.Dump(args.OutParams.Out)
-	if err := displayErrors(ts); err != nil {
-		return err
-	}
-	return nil
 }
 
 // checkArgs sets up and checks args.
@@ -482,8 +475,8 @@ func checkArgs(cmd *cobra.Command, mode string, ts *templates.Set, args *Args) e
 	return nil
 }
 
-// BuildContext builds a context for the mode and template.
-func BuildContext(ctx context.Context, args *Args) context.Context {
+// buildContext builds a context for the mode and template.
+func buildContext(ctx context.Context, args *Args) context.Context {
 	// add loader flags
 	for k, v := range args.LoaderParams.Flags {
 		ctx = context.WithValue(ctx, k, v.Interface())
